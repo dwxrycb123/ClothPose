@@ -13,8 +13,8 @@ sudo apt-get install libtbb-dev
 
 Clone this repository and build the library using: 
 ```bash
-git clone <repo_url> --recursive --depth 1 
-cd <repo_name>
+git clone https://github.com/dwxrycb123/ClothPose.git --recursive --depth 1 
+cd ClothPose
 cmake -Bbuild -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 16
 ```
