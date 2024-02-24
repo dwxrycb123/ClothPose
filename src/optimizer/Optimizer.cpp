@@ -39,6 +39,28 @@ void Optimizer::precompute()
                          paraEEeIeJSet, true, MMActiveSet_CCD);
 }
 
+void Optimizer::setupIgnoredCollisionPairs()
+{
+    sh.clearIgnoredPairs(); 
+    sh.build(*meshObject, meshObject->avgEdgeLen() / 3.);
+    computeConstraintSet(*meshObject, sh, dHat2, MMActiveSet, paraEEMMCVIDSet,
+                         paraEEeIeJSet, true, MMActiveSet_CCD);
+    for (const auto& collisionPair : MMActiveSet_CCD)
+    {
+        if (collisionPair.first < 0)
+        {
+            sh.addIgnoredPTs(-collisionPair.first - 1, collisionPair.second);
+        } else {
+            sh.addIgnoredEEs(collisionPair.first, collisionPair.second); 
+        }
+    }
+}
+
+void Optimizer::clearIgnoredCollisionPairs()
+{
+    sh.clearIgnoredPairs(); 
+}
+
 void Optimizer::solve(std::size_t maxIterations,
                       std::size_t estimateRotationInterval)
 {
@@ -98,8 +120,7 @@ void Optimizer::computeGradient(TriMesh& result, Eigen::VectorXd& gradient)
     gradient = Eigen::VectorXd::Zero(meshObject->nVerts() * 3);
     for (auto& e : energies)
         std::visit([this, &gradient](auto& e)
-                   { e.computeGradient(*this, gradient); },
-                   e);
+                   { e.computeGradient(*this, gradient); }, e);
 }
 
 void Optimizer::computePrecondMtr(TriMesh& result, LinearSolver& linSysSolver)
@@ -129,8 +150,7 @@ void Optimizer::computePrecondMtr(TriMesh& result, LinearSolver& linSysSolver)
 
     for (auto& e : energies)
         std::visit([this, &linSysSolver](auto& e)
-                   { e.computeHessian(*this, linSysSolver); },
-                   e);
+                   { e.computeHessian(*this, linSysSolver); }, e);
 }
 
 double Optimizer::computeEnergyVal()

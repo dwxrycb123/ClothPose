@@ -46,6 +46,8 @@ public:
     Optimizer(Optimizer&& optimizer) = default;
     Optimizer& operator=(Optimizer&& optimizer) = default;
     void precompute();
+    void setupIgnoredCollisionPairs(); 
+    void clearIgnoredCollisionPairs(); 
     void solve(std::size_t maxIterations = 100,
                std::size_t estimateRotationInterval = 3);
     void step(bool doLineSearch = false);

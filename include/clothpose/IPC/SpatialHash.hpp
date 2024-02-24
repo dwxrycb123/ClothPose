@@ -12,6 +12,7 @@
 
 #include <cassert>
 #include <clothpose/meshio/TriMesh.hpp>
+#include <clothpose/meta.hpp>
 #include <unordered_map>
 #include <unordered_set>
 namespace IPC
@@ -28,6 +29,8 @@ public:  // data
 
     std::unordered_map<int, std::vector<int>> voxel;
     std::vector<std::vector<int>> pointAndEdgeOccupancy;
+    std::unordered_set<std::tuple<int, int>, cp::TupleHash<int, int>>
+        ignoredPTs, ignoredEEs;
 
 public:  // constructor
     SpatialHash(void) {}
@@ -42,6 +45,19 @@ public:  // constructor
     }
 
 public:  // API
+    void addIgnoredPTs(int pointIndex, int triangleIndex)
+    {
+        ignoredPTs.insert(std::make_tuple(pointIndex, triangleIndex));
+    }
+    void addIgnoredEEs(int firstEdgeIndex, int secondEdgeIndex)
+    {
+        ignoredEEs.insert(std::make_tuple(firstEdgeIndex, secondEdgeIndex));
+    }
+    void clearIgnoredPairs()
+    {
+        ignoredEEs.clear();
+        ignoredPTs.clear();
+    }
     void build(const cp::TriMesh& mesh, double voxelSize)
     {
         const Eigen::MatrixXd& V = mesh.vertices;
@@ -63,8 +79,7 @@ public:  // API
 
         std::vector<Eigen::Array<int, 1, 3>> svVoxelAxisIndex(V.rows());
         tbb::parallel_for(
-            0, (int)V.rows(), 1,
-            [&](int vI)
+            0, (int)V.rows(), 1, [&](int vI)
             { locateVoxelAxisIndex(V.row(vI), svVoxelAxisIndex[vI]); });
 
         voxel.clear();
@@ -200,8 +215,7 @@ public:  // API
 #endif
         // timer_mt.stop();
     }
-
-    void queryPointForTriangles(const Eigen::Matrix<double, 1, 3>& pos,
+    void queryPointForTriangles(int vI, const Eigen::Matrix<double, 1, 3>& pos,
                                 double radius,
                                 std::unordered_set<int>& triInds) const
     {
@@ -227,7 +241,10 @@ public:  // API
                         {
                             if (indI >= surfTriStartInd)
                             {
-                                triInds.insert(indI - surfTriStartInd);
+                                if (ignoredPTs.find(
+                                        {vI, indI - surfTriStartInd}) ==
+                                    ignoredPTs.end())
+                                    triInds.insert(indI - surfTriStartInd);
                             }
                         }
                     }
@@ -235,141 +252,7 @@ public:  // API
             }
         }
     }
-    void queryPointForTriangles(const Eigen::Matrix<double, 1, 3>& pos,
-                                const Eigen::Matrix<double, 1, 3>& dir,
-                                std::unordered_set<int>& triInds,
-                                double radius = 0) const
-    {
-        Eigen::Array<int, 1, 3> mins, maxs;
-        locateVoxelAxisIndex(pos.array().min((pos + dir).array()) - radius,
-                             mins);
-        locateVoxelAxisIndex(pos.array().max((pos + dir).array()) + radius,
-                             maxs);
-        mins = mins.max(Eigen::Array<int, 1, 3>::Zero());
-        maxs = maxs.min(voxelCount - 1);
-
-        triInds.clear();
-        for (int iz = mins[2]; iz <= maxs[2]; ++iz)
-        {
-            int zOffset = iz * voxelCount0x1;
-            for (int iy = mins[1]; iy <= maxs[1]; ++iy)
-            {
-                int yzOffset = iy * voxelCount[0] + zOffset;
-                for (int ix = mins[0]; ix <= maxs[0]; ++ix)
-                {
-                    const auto voxelI = voxel.find(ix + yzOffset);
-                    if (voxelI != voxel.end())
-                    {
-                        for (const auto& indI : voxelI->second)
-                        {
-                            if (indI >= surfTriStartInd)
-                            {
-                                triInds.insert(indI - surfTriStartInd);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    void queryPointForPrimitives(const Eigen::Matrix<double, 1, 3>& pos,
-                                 const Eigen::Matrix<double, 1, 3>& dir,
-                                 std::unordered_set<int>& sVInds,
-                                 std::unordered_set<int>& sEdgeInds,
-                                 std::unordered_set<int>& sTriInds) const
-    {
-        Eigen::Array<int, 1, 3> mins, maxs;
-        locateVoxelAxisIndex(pos.array().min((pos + dir).array()), mins);
-        locateVoxelAxisIndex(pos.array().max((pos + dir).array()), maxs);
-        mins = mins.max(Eigen::Array<int, 1, 3>::Zero());
-        maxs = maxs.min(voxelCount - 1);
-
-        sVInds.clear();
-        sEdgeInds.clear();
-        sTriInds.clear();
-        for (int iz = mins[2]; iz <= maxs[2]; ++iz)
-        {
-            int zOffset = iz * voxelCount0x1;
-            for (int iy = mins[1]; iy <= maxs[1]; ++iy)
-            {
-                int yzOffset = iy * voxelCount[0] + zOffset;
-                for (int ix = mins[0]; ix <= maxs[0]; ++ix)
-                {
-                    const auto voxelI = voxel.find(ix + yzOffset);
-                    if (voxelI != voxel.end())
-                    {
-                        for (const auto& indI : voxelI->second)
-                        {
-                            if (indI < surfEdgeStartInd)
-                            {
-                                sVInds.insert(indI);
-                            }
-                            else if (indI < surfTriStartInd)
-                            {
-                                sEdgeInds.insert(indI - surfEdgeStartInd);
-                            }
-                            else
-                            {
-                                sTriInds.insert(indI - surfTriStartInd);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    void queryEdgeForPE(const Eigen::Matrix<double, 1, 3>& vBegin,
-                        const Eigen::Matrix<double, 1, 3>& vEnd,
-                        std::vector<int>& svInds,
-                        std::vector<int>& edgeInds) const
-    {
-        // timer_mt.start(19);
-        Eigen::Matrix<double, 1, 3> leftBottom =
-            vBegin.array().min(vEnd.array());
-        Eigen::Matrix<double, 1, 3> rightTop = vBegin.array().max(vEnd.array());
-        Eigen::Array<int, 1, 3> mins, maxs;
-        locateVoxelAxisIndex(leftBottom, mins);
-        locateVoxelAxisIndex(rightTop, maxs);
-        mins = mins.max(Eigen::Array<int, 1, 3>::Zero());
-        maxs = maxs.min(voxelCount - 1);
-
-        svInds.resize(0);
-        edgeInds.resize(0);
-        for (int iz = mins[2]; iz <= maxs[2]; ++iz)
-        {
-            int zOffset = iz * voxelCount0x1;
-            for (int iy = mins[1]; iy <= maxs[1]; ++iy)
-            {
-                int yzOffset = iy * voxelCount[0] + zOffset;
-                for (int ix = mins[0]; ix <= maxs[0]; ++ix)
-                {
-                    const auto voxelI = voxel.find(ix + yzOffset);
-                    if (voxelI != voxel.end())
-                    {
-                        for (const auto& indI : voxelI->second)
-                        {
-                            if (indI < surfEdgeStartInd)
-                            {
-                                svInds.emplace_back(indI);
-                            }
-                            else if (indI < surfTriStartInd)
-                            {
-                                edgeInds.emplace_back(indI - surfEdgeStartInd);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        std::sort(edgeInds.begin(), edgeInds.end());
-        edgeInds.erase(std::unique(edgeInds.begin(), edgeInds.end()),
-                       edgeInds.end());
-        std::sort(svInds.begin(), svInds.end());
-        svInds.erase(std::unique(svInds.begin(), svInds.end()), svInds.end());
-        // timer_mt.stop();
-    }
-    void queryEdgeForEdges(const Eigen::Matrix<double, 1, 3>& vBegin,
+    void queryEdgeForEdges(int eI, const Eigen::Matrix<double, 1, 3>& vBegin,
                            const Eigen::Matrix<double, 1, 3>& vEnd,
                            double radius, std::vector<int>& edgeInds,
                            int eIq = -1) const
@@ -404,7 +287,11 @@ public:  // API
                                 indI < surfTriStartInd &&
                                 indI - surfEdgeStartInd > eIq)
                             {
-                                edgeInds.emplace_back(indI - surfEdgeStartInd);
+                                if (ignoredEEs.find(
+                                        {eI, indI - surfEdgeStartInd}) ==
+                                    ignoredEEs.end())
+                                    edgeInds.emplace_back(indI -
+                                                          surfEdgeStartInd);
                             }
                         }
                     }
@@ -416,7 +303,8 @@ public:  // API
                        edgeInds.end());
     }
     void queryEdgeForEdgesWithBBoxCheck(
-        const cp::TriMesh& mesh, const Eigen::Matrix<double, 1, 3>& vBegin,
+        const cp::TriMesh& mesh, int eI,
+        const Eigen::Matrix<double, 1, 3>& vBegin,
         const Eigen::Matrix<double, 1, 3>& vEnd, double radius,
         std::vector<int>& edgeInds, int eIq = -1) const
     {
@@ -465,8 +353,11 @@ public:  // API
                                        0.0)
                                           .any()))
                                 {
-                                    edgeInds.emplace_back(indI -
-                                                          surfEdgeStartInd);
+                                    if (ignoredEEs.find(
+                                            {eI, indI - surfEdgeStartInd}) ==
+                                        ignoredEEs.end())
+                                        edgeInds.emplace_back(indI -
+                                                              surfEdgeStartInd);
                                 }
                             }
                         }
@@ -478,232 +369,6 @@ public:  // API
         edgeInds.erase(std::unique(edgeInds.begin(), edgeInds.end()),
                        edgeInds.end());
     }
-    void queryEdgeForEdges(const Eigen::Matrix<double, 1, 3>& vBegin,
-                           const Eigen::Matrix<double, 1, 3>& vEnd,
-                           const Eigen::Matrix<double, 1, 3>& pBegin,
-                           const Eigen::Matrix<double, 1, 3>& pEnd,
-                           std::vector<int>& edgeInds, double radius = 0,
-                           int eIq = -1) const
-    {
-        Eigen::Matrix<double, 1, 3> vtBegin = vBegin + pBegin;
-        Eigen::Matrix<double, 1, 3> vtEnd = vEnd + pEnd;
-        Eigen::Matrix<double, 1, 3> leftBottom = vBegin.array()
-                                                     .min(vEnd.array())
-                                                     .min(vtBegin.array())
-                                                     .min(vtEnd.array());
-        Eigen::Matrix<double, 1, 3> rightTop = vBegin.array()
-                                                   .max(vEnd.array())
-                                                   .max(vtBegin.array())
-                                                   .max(vtEnd.array());
-        Eigen::Array<int, 1, 3> mins, maxs;
-        locateVoxelAxisIndex(leftBottom.array() - radius, mins);
-        locateVoxelAxisIndex(rightTop.array() + radius, maxs);
-        mins = mins.max(Eigen::Array<int, 1, 3>::Zero());
-        maxs = maxs.min(voxelCount - 1);
-
-        edgeInds.resize(0);
-        for (int iz = mins[2]; iz <= maxs[2]; ++iz)
-        {
-            int zOffset = iz * voxelCount0x1;
-            for (int iy = mins[1]; iy <= maxs[1]; ++iy)
-            {
-                int yzOffset = iy * voxelCount[0] + zOffset;
-                for (int ix = mins[0]; ix <= maxs[0]; ++ix)
-                {
-                    const auto voxelI = voxel.find(ix + yzOffset);
-                    if (voxelI != voxel.end())
-                    {
-                        for (const auto& indI : voxelI->second)
-                        {
-                            if (indI >= surfEdgeStartInd &&
-                                indI < surfTriStartInd &&
-                                indI - surfEdgeStartInd > eIq)
-                            {
-                                edgeInds.emplace_back(indI - surfEdgeStartInd);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        std::sort(edgeInds.begin(), edgeInds.end());
-        edgeInds.erase(std::unique(edgeInds.begin(), edgeInds.end()),
-                       edgeInds.end());
-    }
-
-    void queryTriangleForPoints(const Eigen::Matrix<double, 1, 3>& v0,
-                                const Eigen::Matrix<double, 1, 3>& v1,
-                                const Eigen::Matrix<double, 1, 3>& v2,
-                                double radius,
-                                std::unordered_set<int>& pointInds) const
-    {
-        Eigen::Matrix<double, 1, 3> leftBottom =
-            v0.array().min(v1.array()).min(v2.array());
-        Eigen::Matrix<double, 1, 3> rightTop =
-            v0.array().max(v1.array()).max(v2.array());
-        Eigen::Array<int, 1, 3> mins, maxs;
-        locateVoxelAxisIndex(leftBottom.array() - radius, mins);
-        locateVoxelAxisIndex(rightTop.array() + radius, maxs);
-        mins = mins.max(Eigen::Array<int, 1, 3>::Zero());
-        maxs = maxs.min(voxelCount - 1);
-
-        pointInds.clear();
-        for (int iz = mins[2]; iz <= maxs[2]; ++iz)
-        {
-            int zOffset = iz * voxelCount0x1;
-            for (int iy = mins[1]; iy <= maxs[1]; ++iy)
-            {
-                int yzOffset = iy * voxelCount[0] + zOffset;
-                for (int ix = mins[0]; ix <= maxs[0]; ++ix)
-                {
-                    const auto voxelI = voxel.find(ix + yzOffset);
-                    if (voxelI != voxel.end())
-                    {
-                        for (const auto& indI : voxelI->second)
-                        {
-                            if (indI < surfEdgeStartInd)
-                            {
-                                pointInds.insert(indI);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    void queryTriangleForPoints(const Eigen::Matrix<double, 1, 3>& v0,
-                                const Eigen::Matrix<double, 1, 3>& v1,
-                                const Eigen::Matrix<double, 1, 3>& v2,
-                                const Eigen::Matrix<double, 1, 3>& p0,
-                                const Eigen::Matrix<double, 1, 3>& p1,
-                                const Eigen::Matrix<double, 1, 3>& p2,
-                                std::unordered_set<int>& pointInds) const
-    {
-        Eigen::Matrix<double, 1, 3> v0t = v0 + p0, v1t = v1 + p1, v2t = v2 + p2;
-        Eigen::Matrix<double, 1, 3> leftBottom = v0.array()
-                                                     .min(v1.array())
-                                                     .min(v2.array())
-                                                     .min(v0t.array())
-                                                     .min(v1t.array())
-                                                     .min(v2t.array());
-        Eigen::Matrix<double, 1, 3> rightTop = v0.array()
-                                                   .max(v1.array())
-                                                   .max(v2.array())
-                                                   .max(v0t.array())
-                                                   .max(v1t.array())
-                                                   .max(v2t.array());
-        Eigen::Array<int, 1, 3> mins, maxs;
-        locateVoxelAxisIndex(leftBottom.array(), mins);
-        locateVoxelAxisIndex(rightTop.array(), maxs);
-        mins = mins.max(Eigen::Array<int, 1, 3>::Zero());
-        maxs = maxs.min(voxelCount - 1);
-
-        pointInds.clear();
-        for (int iz = mins[2]; iz <= maxs[2]; ++iz)
-        {
-            int zOffset = iz * voxelCount0x1;
-            for (int iy = mins[1]; iy <= maxs[1]; ++iy)
-            {
-                int yzOffset = iy * voxelCount[0] + zOffset;
-                for (int ix = mins[0]; ix <= maxs[0]; ++ix)
-                {
-                    const auto voxelI = voxel.find(ix + yzOffset);
-                    if (voxelI != voxel.end())
-                    {
-                        for (const auto& indI : voxelI->second)
-                        {
-                            if (indI < surfEdgeStartInd)
-                            {
-                                pointInds.insert(indI);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    void queryTriangleForEdges(const Eigen::Matrix<double, 1, 3>& v0,
-                               const Eigen::Matrix<double, 1, 3>& v1,
-                               const Eigen::Matrix<double, 1, 3>& v2,
-                               double radius,
-                               std::unordered_set<int>& edgeInds) const
-    {
-        Eigen::Matrix<double, 1, 3> leftBottom =
-            v0.array().min(v1.array()).min(v2.array());
-        Eigen::Matrix<double, 1, 3> rightTop =
-            v0.array().max(v1.array()).max(v2.array());
-        Eigen::Array<int, 1, 3> mins, maxs;
-        locateVoxelAxisIndex(leftBottom.array() - radius, mins);
-        locateVoxelAxisIndex(rightTop.array() + radius, maxs);
-        mins = mins.max(Eigen::Array<int, 1, 3>::Zero());
-        maxs = maxs.min(voxelCount - 1);
-
-        edgeInds.clear();
-        for (int iz = mins[2]; iz <= maxs[2]; ++iz)
-        {
-            int zOffset = iz * voxelCount0x1;
-            for (int iy = mins[1]; iy <= maxs[1]; ++iy)
-            {
-                int yzOffset = iy * voxelCount[0] + zOffset;
-                for (int ix = mins[0]; ix <= maxs[0]; ++ix)
-                {
-                    const auto voxelI = voxel.find(ix + yzOffset);
-                    if (voxelI != voxel.end())
-                    {
-                        for (const auto& indI : voxelI->second)
-                        {
-                            if (indI >= surfEdgeStartInd &&
-                                indI < surfTriStartInd)
-                            {
-                                edgeInds.insert(indI - surfEdgeStartInd);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    void queryEdgeForTriangles(const Eigen::Matrix<double, 1, 3>& vBegin,
-                               const Eigen::Matrix<double, 1, 3>& vEnd,
-                               double radius,
-                               std::unordered_set<int>& triInds) const
-    {
-        Eigen::Matrix<double, 1, 3> leftBottom =
-            vBegin.array().min(vEnd.array());
-        Eigen::Matrix<double, 1, 3> rightTop = vBegin.array().max(vEnd.array());
-        Eigen::Array<int, 1, 3> mins, maxs;
-        locateVoxelAxisIndex(leftBottom.array() - radius, mins);
-        locateVoxelAxisIndex(rightTop.array() + radius, maxs);
-        mins = mins.max(Eigen::Array<int, 1, 3>::Zero());
-        maxs = maxs.min(voxelCount - 1);
-
-        triInds.clear();
-        for (int iz = mins[2]; iz <= maxs[2]; ++iz)
-        {
-            int zOffset = iz * voxelCount0x1;
-            for (int iy = mins[1]; iy <= maxs[1]; ++iy)
-            {
-                int yzOffset = iy * voxelCount[0] + zOffset;
-                for (int ix = mins[0]; ix <= maxs[0]; ++ix)
-                {
-                    const auto voxelI = voxel.find(ix + yzOffset);
-                    if (voxelI != voxel.end())
-                    {
-                        for (const auto& indI : voxelI->second)
-                        {
-                            if (indI >= surfTriStartInd)
-                            {
-                                triInds.insert(indI - surfTriStartInd);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     void build(const cp::TriMesh& mesh, const Eigen::VectorXd& searchDir,
                double& curMaxStepSize, double voxelSize)
     {
@@ -857,35 +522,6 @@ public:  // API
             }
         }
     }
-
-    void queryPointForPrimitives(int svI, std::unordered_set<int>& sVInds,
-                                 std::unordered_set<int>& sEdgeInds,
-                                 std::unordered_set<int>& sTriInds) const
-    {
-        sVInds.clear();
-        sEdgeInds.clear();
-        sTriInds.clear();
-        for (const auto& voxelInd : pointAndEdgeOccupancy[svI])
-        {
-            const auto& voxelI = voxel.find(voxelInd);
-            assert(voxelI != voxel.end());
-            for (const auto& indI : voxelI->second)
-            {
-                if (indI < surfEdgeStartInd)
-                {
-                    sVInds.insert(indI);
-                }
-                else if (indI < surfTriStartInd)
-                {
-                    sEdgeInds.insert(indI - surfEdgeStartInd);
-                }
-                else
-                {
-                    sTriInds.insert(indI - surfTriStartInd);
-                }
-            }
-        }
-    }
     void queryPointForTriangles(int svI,
                                 std::unordered_set<int>& sTriInds) const
     {
@@ -898,7 +534,9 @@ public:  // API
             {
                 if (indI >= surfTriStartInd)
                 {
-                    sTriInds.insert(indI - surfTriStartInd);
+                    if (ignoredPTs.find({svI, indI - surfTriStartInd}) ==
+                        ignoredPTs.end())
+                        sTriInds.insert(indI - surfTriStartInd);
                 }
             }
         }
@@ -918,7 +556,9 @@ public:  // API
                 if (indI >= surfEdgeStartInd && indI < surfTriStartInd &&
                     indI - surfEdgeStartInd > seI)
                 {
-                    sEdgeInds.insert(indI - surfEdgeStartInd);
+                    if (ignoredEEs.find({seI, indI - surfEdgeStartInd}) ==
+                        ignoredEEs.end())
+                        sEdgeInds.insert(indI - surfEdgeStartInd);
                 }
             }
         }
@@ -991,7 +631,9 @@ public:  // API
                     if (!((bboxEJBottomLeft - bboxEITopRight > 0.0).any() ||
                           (bboxEIBottomLeft - bboxEJTopRight > 0.0).any()))
                     {
-                        sEdgeInds.insert(indI - surfEdgeStartInd);
+                        if (ignoredEEs.find({seI, indI - surfEdgeStartInd}) ==
+                            ignoredEEs.end())
+                            sEdgeInds.insert(indI - surfEdgeStartInd);
                     }
                 }
             }
@@ -1025,5 +667,5 @@ public:  // helper functions
         return ix + iy * voxelCount[0] + iz * voxelCount0x1;
     }
 };  // class SpatialHash
-}  
+}  // namespace IPC
 #endif  // SpatialHash_hpp

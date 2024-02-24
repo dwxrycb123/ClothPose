@@ -34,7 +34,8 @@ inline void computeConstraintSet(
         [&](int vI)
         {
             std::unordered_set<int> triInds;
-            sh.queryPointForTriangles(mesh.vertices.row(vI), sqrtDHat, triInds);
+            sh.queryPointForTriangles(vI, mesh.vertices.row(vI), sqrtDHat,
+                                      triInds);
             for (const auto& sfI : triInds)
             {
                 const Eigen::RowVector3i& sfVInd = mesh.triangles.row(sfI);
@@ -162,7 +163,7 @@ inline void computeConstraintSet(
 
             std::vector<int> edgeInds;
             sh.queryEdgeForEdgesWithBBoxCheck(
-                mesh, mesh.vertices.row(meshEI.first),
+                mesh, eI, mesh.vertices.row(meshEI.first),
                 mesh.vertices.row(meshEI.second), sqrtDHat, edgeInds, eI);
             for (const auto& eJ : edgeInds)
             {

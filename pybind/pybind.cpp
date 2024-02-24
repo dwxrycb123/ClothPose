@@ -202,7 +202,8 @@ PYBIND11_MODULE(py_clothpose, m)
                  [](const cp::TriMesh& restMesh, cp::MeshObject meshObject,
                     double relDHat = 3e-3, double barrierWeight = 1e5,
                     double ARAPWeight = 10.0, double ARAPBoundaryWeight = 1.0,
-                    std::vector<monostated<cp::Energy>::type> monoEnergyTerms = {},
+                    std::vector<monostated<cp::Energy>::type> monoEnergyTerms =
+                        {},
                     double relNewtonDirRes = 1e-2)
                  {
                      std::vector<cp::Energy> energyTerms;
@@ -210,9 +211,9 @@ PYBIND11_MODULE(py_clothpose, m)
                          energyTerms.push_back(variant_cast_no_monostate(e));
 
                      return cp::Optimizer{restMesh,    meshObject,
-                                      relDHat,     barrierWeight,
-                                      ARAPWeight,  ARAPBoundaryWeight,
-                                      energyTerms, relNewtonDirRes};
+                                          relDHat,     barrierWeight,
+                                          ARAPWeight,  ARAPBoundaryWeight,
+                                          energyTerms, relNewtonDirRes};
                  }),
              py::arg("rest_mesh"), py::arg("current_mesh"), py::arg("rel_dHat"),
              py::arg("barrier_weight"), py::arg("ARAP_weight"),
@@ -221,5 +222,9 @@ PYBIND11_MODULE(py_clothpose, m)
         .def("set_coarse_mesh", &cp::Optimizer::setCoarseMesh, py::arg("mesh"))
         .def("set_pcd", &cp::Optimizer::setPCD, py::arg("pcd"))
         .def("solve", &cp::Optimizer::solve, py::arg("max_iters"),
-             py::arg("est_rot_per_iters"));
+             py::arg("est_rot_per_iters"))
+        .def("setup_ignored_collision_pairs",
+             &cp::Optimizer::setupIgnoredCollisionPairs)
+        .def("clear_ignored_collision_pairs",
+             &cp::Optimizer::clearIgnoredCollisionPairs);
 }
